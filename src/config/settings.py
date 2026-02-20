@@ -1,8 +1,7 @@
-import os
 from pathlib import Path
 from typing import Any
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BaseAppSettings(BaseSettings):
@@ -13,15 +12,18 @@ class BaseAppSettings(BaseSettings):
 
 
 class Settings(BaseAppSettings):
-    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "test_user")
-    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "test_password")
-    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "test_host")
-    POSTGRES_DB_PORT: int = int(os.getenv("POSTGRES_DB_PORT", 5432))
-    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "test_db")
+    BASE_DIR: Path = Path(__file__).parent.parent
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_HOST: str
+    POSTGRES_DB_PORT: int
+    POSTGRES_DB: str
 
-    SECRET_KEY_ACCESS: str = str(os.getenv("SECRET_KEY_ACCESS", os.urandom(32)))
-    SECRET_KEY_REFRESH: str = str(os.getenv("SECRET_KEY_REFRESH", os.urandom(32)))
-    JWT_SIGNING_ALGORITHM: str = os.getenv("JWT_SIGNING_ALGORITHM", "HS256")
+    SECRET_KEY_ACCESS: str
+    SECRET_KEY_REFRESH: str
+    JWT_SIGNING_ALGORITHM: str
+
+    model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
 
 
 class TestingSettings(BaseAppSettings):

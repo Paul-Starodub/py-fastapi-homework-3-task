@@ -89,7 +89,8 @@ async def request_password_reset(input_data: PasswordResetRequestSchema, db: Asy
     user = result.scalar_one_or_none()
     if user:
         await db.execute(delete(PasswordResetTokenModel).where(PasswordResetTokenModel.user_id == user.id))
-        token = PasswordResetTokenModel(user_id=user.id)
-        db.add(token)
-        await db.commit()
+        if user.is_active:
+            token = PasswordResetTokenModel(user_id=user.id)
+            db.add(token)
+            await db.commit()
     return {"message": "If you are registered, you will receive an email with instructions."}

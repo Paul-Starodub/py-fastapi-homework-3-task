@@ -65,17 +65,18 @@ async def activate_account(activation_data: UserActivationRequestSchema, db: Asy
     expires_at = token_obj.expires_at
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=UTC)
-    if expires_at < datetime.now(UTC):
-        await db.delete(token_obj)
-        await db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired activation token.")
     user = token_obj.user
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-    if user.is_active:
+    error = None
+    if expires_at < datetime.now(UTC):
+        error = "Invalid or expired activation token."
+    elif user is None:
+        error = "User not found."
+    elif user.is_active:
+        error = "User account is already active."
+    if error:
         await db.delete(token_obj)
         await db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User account is already active.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
     user.is_active = True
     await db.delete(token_obj)
     await db.commit()

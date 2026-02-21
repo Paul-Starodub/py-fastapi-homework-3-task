@@ -24,11 +24,11 @@ class UserActivationRequestSchema(BaseModel):
     token: str
 
 
-class MessageResponseSchema(BaseModel):
-    pass
-
-
 class PasswordResetRequestSchema(BaseModel):
+    email: EmailStr
+
+
+class MessageResponseSchema(BaseModel):
     pass
 
 

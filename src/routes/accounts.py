@@ -100,12 +100,17 @@ async def request_password_reset(input_data: PasswordResetRequestSchema, db: Asy
 @router.post("/reset-password/complete/")
 async def reset_password(reset_payload: PasswordResetCompleteRequestSchema, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(PasswordResetTokenModel)
-        .options(joinedload(PasswordResetTokenModel.user))
-        .where(PasswordResetTokenModel.token == reset_payload.token)
+        select(UserModel)
+        .options(joinedload(UserModel.password_reset_token))
+        .where(UserModel.email == reset_payload.email.lower())
     )
-    token_obj = result.scalar_one_or_none()
-    if token_obj is None:
+    user = result.scalar_one_or_none()
+    if user is None or user.password_reset_token is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email or token.")
+    token_obj = user.password_reset_token
+    if token_obj.token != reset_payload.token:
+        await db.delete(token_obj)
+        await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email or token.")
     expires_at = token_obj.expires_at
     if expires_at.tzinfo is None:
@@ -113,12 +118,7 @@ async def reset_password(reset_payload: PasswordResetCompleteRequestSchema, db: 
     if expires_at < datetime.now(UTC):
         await db.delete(token_obj)
         await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Activation token should be created in the database."
-        )
-    user = token_obj.user
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email or token.")
     try:
         user.password = reset_payload.password
         await db.delete(token_obj)

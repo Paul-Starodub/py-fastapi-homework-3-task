@@ -22,6 +22,7 @@ from schemas.accounts import (
     UserActivationRequestSchema,
     PasswordResetRequestSchema,
     PasswordResetCompleteRequestSchema,
+    MessageResponseSchema,
 )
 from security.interfaces import JWTAuthManagerInterface
 from security.utils import ensure_utc
@@ -56,7 +57,7 @@ async def register_user(user_data: UserRegistrationRequestSchema, db: AsyncSessi
         )
 
 
-@router.post("/activate/")
+@router.post("/activate/", response_model=MessageResponseSchema)
 async def activate_account(activation_data: UserActivationRequestSchema, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(ActivationTokenModel)
@@ -83,10 +84,10 @@ async def activate_account(activation_data: UserActivationRequestSchema, db: Asy
     user.is_active = True
     await db.delete(token_obj)
     await db.commit()
-    return {"message": "User account activated successfully."}
+    return MessageResponseSchema(message="User account activated successfully.")
 
 
-@router.post("/password-reset/request/")
+@router.post("/password-reset/request/", response_model=MessageResponseSchema)
 async def request_password_reset(input_data: PasswordResetRequestSchema, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(UserModel).where(UserModel.email == input_data.email))
     user = result.scalar_one_or_none()
@@ -96,10 +97,10 @@ async def request_password_reset(input_data: PasswordResetRequestSchema, db: Asy
             token = PasswordResetTokenModel(user_id=user.id)
             db.add(token)
             await db.commit()
-    return {"message": "If you are registered, you will receive an email with instructions."}
+    return MessageResponseSchema(message="If you are registered, you will receive an email with instructions.")
 
 
-@router.post("/reset-password/complete/")
+@router.post("/reset-password/complete/", response_model=MessageResponseSchema)
 async def reset_password(reset_payload: PasswordResetCompleteRequestSchema, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(UserModel)
@@ -123,7 +124,7 @@ async def reset_password(reset_payload: PasswordResetCompleteRequestSchema, db: 
         user.password = reset_payload.password
         await db.delete(token_obj)
         await db.commit()
-        return {"message": "Password reset successfully."}
+        return MessageResponseSchema(message="Password reset successfully.")
     except SQLAlchemyError:
         await db.rollback()
         raise HTTPException(

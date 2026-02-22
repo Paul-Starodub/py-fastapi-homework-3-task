@@ -29,7 +29,7 @@ class PasswordResetRequestSchema(BaseModel):
 
 
 class MessageResponseSchema(BaseModel):
-    pass
+    message: str
 
 
 class PasswordResetCompleteRequestSchema(BaseModel):

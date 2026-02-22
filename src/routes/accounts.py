@@ -107,19 +107,20 @@ async def reset_password(reset_payload: PasswordResetCompleteRequestSchema, db: 
         .options(joinedload(UserModel.password_reset_token))
         .where(UserModel.email == reset_payload.email.lower())
     )
+    raise_exception = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email or token.")
     user = result.scalar_one_or_none()
     if user is None or user.password_reset_token is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email or token.")
+        raise raise_exception
     token_obj = user.password_reset_token
     if token_obj.token != reset_payload.token:
         await db.delete(token_obj)
         await db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email or token.")
+        raise raise_exception
     expires_at = ensure_utc(token_obj.expires_at)
     if expires_at < datetime.now(UTC):
         await db.delete(token_obj)
         await db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email or token.")
+        raise raise_exception
     try:
         user.password = reset_payload.password
         await db.delete(token_obj)

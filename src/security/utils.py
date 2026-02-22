@@ -1,5 +1,5 @@
 import secrets
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 
 def generate_secure_token(length: int = 32) -> str:
@@ -18,5 +18,5 @@ def ensure_utc(dt: datetime) -> datetime:
     If datetime is naive, attach UTC timezone.
     """
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
+        return dt.replace(tzinfo=timezone.utc)
     return dt

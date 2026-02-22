@@ -60,8 +60,9 @@ async def register_user(user_data: UserRegistrationRequestSchema, db: AsyncSessi
 async def activate_account(activation_data: UserActivationRequestSchema, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(ActivationTokenModel)
+        .join(ActivationTokenModel.user)
         .options(joinedload(ActivationTokenModel.user))
-        .where(ActivationTokenModel.token == activation_data.token)
+        .where(ActivationTokenModel.token == activation_data.token, UserModel.email == activation_data.email.lower())
     )
     token_obj = result.scalar_one_or_none()
     if token_obj is None:

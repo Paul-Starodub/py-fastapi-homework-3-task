@@ -1,5 +1,4 @@
-from datetime import datetime, timezone, UTC
-from typing import cast
+from datetime import datetime, UTC
 from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -23,6 +22,8 @@ from schemas.accounts import (
     PasswordResetRequestSchema,
     PasswordResetCompleteRequestSchema,
     MessageResponseSchema,
+    UserLoginResponseSchema,
+    UserLoginRequestSchema,
 )
 from security.interfaces import JWTAuthManagerInterface
 from security.utils import ensure_utc
@@ -130,4 +131,30 @@ async def reset_password(reset_payload: PasswordResetCompleteRequestSchema, db: 
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred while resetting the password."
+        )
+
+
+@router.post("/login/", response_model=UserLoginResponseSchema, status_code=status.HTTP_201_CREATED)
+async def login(
+    login_payload: UserLoginRequestSchema,
+    db: AsyncSession = Depends(get_db),
+    auth_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
+):
+    result = await db.execute(select(UserModel).where(UserModel.email == login_payload.email.lower()))
+    user = result.scalar_one_or_none()
+    if user is None or not user.verify_password(login_payload.password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password.")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is not activated.")
+    access_token = auth_manager.create_access_token(data={"user_id": user.id})
+    try:
+        refresh_token = auth_manager.create_refresh_token(data={"user_id": user.id})
+        refresh_token_obj = RefreshTokenModel(user_id=user.id, token=refresh_token)
+        db.add(refresh_token_obj)
+        await db.commit()
+        return UserLoginResponseSchema(access_token=access_token, refresh_token=refresh_token)
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred while processing the request."
         )

@@ -24,6 +24,7 @@ from schemas.accounts import (
     PasswordResetCompleteRequestSchema,
 )
 from security.interfaces import JWTAuthManagerInterface
+from security.utils import ensure_utc
 
 router = APIRouter()
 
@@ -63,9 +64,7 @@ async def activate_account(activation_data: UserActivationRequestSchema, db: Asy
     token_obj = result.scalar_one_or_none()
     if token_obj is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired activation token.")
-    expires_at = token_obj.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
+    expires_at = ensure_utc(token_obj.expires_at)
     user = token_obj.user
     error = None
     if expires_at < datetime.now(UTC):
@@ -112,9 +111,7 @@ async def reset_password(reset_payload: PasswordResetCompleteRequestSchema, db: 
         await db.delete(token_obj)
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email or token.")
-    expires_at = token_obj.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
+    expires_at = ensure_utc(token_obj.expires_at)
     if expires_at < datetime.now(UTC):
         await db.delete(token_obj)
         await db.commit()

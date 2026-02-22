@@ -41,6 +41,7 @@ async def register_user(user_data: UserRegistrationRequestSchema, db: AsyncSessi
         try:
             await db.flush()
         except IntegrityError:
+            await db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=f"A user with this email {user.email} already exists."
             )
@@ -49,6 +50,7 @@ async def register_user(user_data: UserRegistrationRequestSchema, db: AsyncSessi
         await db.commit()
         return user
     except SQLAlchemyError:
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred during user creation."
         )

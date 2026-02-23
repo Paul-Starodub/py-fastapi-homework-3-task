@@ -14,7 +14,7 @@ from database import (
     PasswordResetTokenModel,
     RefreshTokenModel,
 )
-from exceptions import BaseSecurityError
+from exceptions import BaseSecurityError, TokenExpiredError, InvalidTokenError
 from schemas.accounts import (
     UserRegistrationRequestSchema,
     UserRegistrationResponseSchema,
@@ -24,6 +24,8 @@ from schemas.accounts import (
     MessageResponseSchema,
     UserLoginResponseSchema,
     UserLoginRequestSchema,
+    TokenRefreshResponseSchema,
+    TokenRefreshRequestSchema,
 )
 from security.interfaces import JWTAuthManagerInterface
 from security.utils import ensure_utc
@@ -158,3 +160,29 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred while processing the request."
         )
+
+
+@router.post("/refresh/", response_model=TokenRefreshResponseSchema)
+async def refresh_access_token(
+    refresh_payload: TokenRefreshRequestSchema,
+    db: AsyncSession = Depends(get_db),
+    auth_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
+):
+    try:
+        auth_manager.verify_refresh_token_or_raise(refresh_payload.refresh_token)
+    except TokenExpiredError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token has expired.")
+    except InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token.")
+    result = await db.execute(select(RefreshTokenModel).where(RefreshTokenModel.token == refresh_payload.refresh_token))
+    refresh_token_obj = result.scalar_one_or_none()
+    if refresh_token_obj is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token not found.")
+    expires_at = ensure_utc(refresh_token_obj.expires_at)
+    if expires_at < datetime.now(UTC):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token has expired.")
+    user = await db.get(UserModel, refresh_token_obj.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+    access_token = auth_manager.create_access_token(data={"user_id": refresh_token_obj.user_id})
+    return TokenRefreshResponseSchema(access_token=access_token)

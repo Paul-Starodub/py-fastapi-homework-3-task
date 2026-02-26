@@ -1,9 +1,9 @@
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import joinedload
 from config import get_jwt_auth_manager, get_settings, BaseAppSettings
 from database import (
     get_db,
@@ -14,7 +14,7 @@ from database import (
     PasswordResetTokenModel,
     RefreshTokenModel,
 )
-from exceptions import BaseSecurityError, TokenExpiredError, InvalidTokenError
+from exceptions import TokenExpiredError, InvalidTokenError
 from schemas.accounts import (
     UserRegistrationRequestSchema,
     UserRegistrationResponseSchema,
@@ -47,7 +47,7 @@ async def register_user(user_data: UserRegistrationRequestSchema, db: AsyncSessi
         except IntegrityError:
             await db.rollback()
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=f"A user with this email {user.email} already exists."
+                status_code=status.HTTP_409_CONFLICT, detail=f"A user with this email {user_data.email} already exists."
             )
         activation_token = ActivationTokenModel(user_id=user.id)
         db.add(activation_token)
@@ -73,17 +73,12 @@ async def activate_account(activation_data: UserActivationRequestSchema, db: Asy
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired activation token.")
     expires_at = ensure_utc(token_obj.expires_at)
     user = token_obj.user
-    error = None
-    if expires_at < datetime.now(UTC):
-        error = "Invalid or expired activation token."
-    elif user is None:
-        error = "User not found."
-    elif user.is_active:
-        error = "User account is already active."
-    if error:
-        await db.delete(token_obj)
-        await db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+    if expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired activation token.")
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User not found.")
+    if user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User account is already active.")
     user.is_active = True
     await db.delete(token_obj)
     await db.commit()
@@ -92,14 +87,13 @@ async def activate_account(activation_data: UserActivationRequestSchema, db: Asy
 
 @router.post("/password-reset/request/", response_model=MessageResponseSchema)
 async def request_password_reset(input_data: PasswordResetRequestSchema, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(UserModel).where(UserModel.email == input_data.email))
+    result = await db.execute(select(UserModel).where(UserModel.email == input_data.email.lower()))
     user = result.scalar_one_or_none()
-    if user:
+    if user and user.is_active:
         await db.execute(delete(PasswordResetTokenModel).where(PasswordResetTokenModel.user_id == user.id))
-        if user.is_active:
-            token = PasswordResetTokenModel(user_id=user.id)
-            db.add(token)
-            await db.commit()
+        token = PasswordResetTokenModel(user_id=user.id)
+        db.add(token)
+        await db.commit()
     return MessageResponseSchema(message="If you are registered, you will receive an email with instructions.")
 
 
@@ -120,7 +114,7 @@ async def reset_password(reset_payload: PasswordResetCompleteRequestSchema, db: 
         await db.commit()
         raise raise_exception
     expires_at = ensure_utc(token_obj.expires_at)
-    if expires_at < datetime.now(UTC):
+    if expires_at < datetime.now(timezone.utc):
         await db.delete(token_obj)
         await db.commit()
         raise raise_exception
@@ -141,6 +135,7 @@ async def login(
     login_payload: UserLoginRequestSchema,
     db: AsyncSession = Depends(get_db),
     auth_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
+    settings: BaseAppSettings = Depends(get_settings),
 ):
     result = await db.execute(select(UserModel).where(UserModel.email == login_payload.email.lower()))
     user = result.scalar_one_or_none()
@@ -151,7 +146,9 @@ async def login(
     access_token = auth_manager.create_access_token(data={"user_id": user.id})
     try:
         refresh_token = auth_manager.create_refresh_token(data={"user_id": user.id})
-        refresh_token_obj = RefreshTokenModel(user_id=user.id, token=refresh_token)
+        refresh_token_obj = RefreshTokenModel.create(
+            user_id=user.id, days_valid=settings.LOGIN_TIME_DAYS, token=refresh_token
+        )
         db.add(refresh_token_obj)
         await db.commit()
         return UserLoginResponseSchema(access_token=access_token, refresh_token=refresh_token)
@@ -169,20 +166,25 @@ async def refresh_access_token(
     auth_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
 ):
     try:
-        auth_manager.verify_refresh_token_or_raise(refresh_payload.refresh_token)
+        payload = auth_manager.decode_refresh_token(refresh_payload.refresh_token)
     except TokenExpiredError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token has expired.")
     except InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token.")
+    token_user_id = payload.get("user_id")
+    if token_user_id is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token.")
     result = await db.execute(select(RefreshTokenModel).where(RefreshTokenModel.token == refresh_payload.refresh_token))
     refresh_token_obj = result.scalar_one_or_none()
     if refresh_token_obj is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token not found.")
+    if refresh_token_obj.user_id != token_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token.")
     expires_at = ensure_utc(refresh_token_obj.expires_at)
-    if expires_at < datetime.now(UTC):
+    if expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token has expired.")
     user = await db.get(UserModel, refresh_token_obj.user_id)
     if user is None:
-        raise HTTPException(status_code=404, detail="User not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
     access_token = auth_manager.create_access_token(data={"user_id": refresh_token_obj.user_id})
     return TokenRefreshResponseSchema(access_token=access_token)

@@ -108,6 +108,8 @@ async def reset_password(reset_payload: PasswordResetCompleteRequestSchema, db: 
     user = result.scalar_one_or_none()
     if user is None or user.password_reset_token is None:
         raise raise_exception
+    if not user.is_active:
+        raise raise_exception
     token_obj = user.password_reset_token
     if token_obj.token != reset_payload.token:
         await db.delete(token_obj)
